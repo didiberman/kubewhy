@@ -1,0 +1,33 @@
+# A deliberately broken workload for testing kubewhy against a real failure.
+# "checkout" allocates 300Mi under a 100Mi memory limit -- reliably OOMKilled
+# and restarted in a loop, which is exactly the scenario in the README demo.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: prod
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: checkout
+  namespace: prod
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: checkout
+  template:
+    metadata:
+      labels:
+        app: checkout
+    spec:
+      containers:
+        - name: checkout
+          image: polinux/stress
+          command: ["stress"]
+          args: ["--vm", "1", "--vm-bytes", "300M", "--vm-hang", "1"]
+          resources:
+            limits:
+              memory: "100Mi"
+            requests:
+              memory: "50Mi"
