@@ -27,12 +27,14 @@ type Config struct {
 }
 
 var (
-	styleHealthy = lipgloss.NewStyle().Foreground(lipgloss.Color("2"))  // green
-	styleWarning = lipgloss.NewStyle().Foreground(lipgloss.Color("3")) // yellow
-	styleBroken  = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("1")) // red
-	styleDim     = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
-	styleHeader  = lipgloss.NewStyle().Bold(true).Underline(true)
-	styleTitle   = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("6"))
+	styleHealthy  = lipgloss.NewStyle().Foreground(lipgloss.Color("2")) // green
+	styleWarning  = lipgloss.NewStyle().Foreground(lipgloss.Color("3")) // yellow
+	styleBroken   = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("1")) // red
+	styleDim      = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
+	styleHeader   = lipgloss.NewStyle().Bold(true).Underline(true)
+	styleTitle    = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("6"))
+	styleSelected = lipgloss.NewStyle().Bold(true).Underline(true)
+	styleDetail   = lipgloss.NewStyle().Foreground(lipgloss.Color("7")).PaddingLeft(6)
 )
 
 type investigation struct {
@@ -64,6 +66,10 @@ type model struct {
 	investigations map[string]*investigation
 	lastErr        error
 	polls          int
+
+	selectedKey string
+	expanded    bool
+	width       int
 }
 
 func Run(ctx context.Context, cfg Config) error {
@@ -80,6 +86,7 @@ func Run(ctx context.Context, cfg Config) error {
 		llmModel:       cfg.Model,
 		pods:           map[string]watcher.PodHealth{},
 		investigations: map[string]*investigation{},
+		width:          100,
 	}
 	p := tea.NewProgram(m, tea.WithAltScreen())
 	_, err = p.Run()
@@ -108,12 +115,42 @@ func investigateCmd(ctx context.Context, key, namespace, name, apiKey, llmModel 
 	}
 }
 
+// brokenSorted returns the broken pods in the same stable order used for
+// rendering, so selection indices line up with what's on screen.
+func (m model) brokenSorted() []watcher.PodHealth {
+	var broken []watcher.PodHealth
+	for _, p := range m.pods {
+		if p.Status == watcher.StatusBroken {
+			broken = append(broken, p)
+		}
+	}
+	sort.Slice(broken, func(i, j int) bool { return broken[i].Key() < broken[j].Key() })
+	return broken
+}
+
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
+	case tea.WindowSizeMsg:
+		m.width = msg.Width
+
 	case tea.KeyMsg:
-		if msg.String() == "q" || msg.String() == "ctrl+c" {
+		switch msg.String() {
+		case "q", "ctrl+c":
 			return m, tea.Quit
+		case "up", "k":
+			m.moveSelection(-1)
+			m.expanded = false
+		case "down", "j":
+			m.moveSelection(1)
+			m.expanded = false
+		case "enter", " ":
+			if m.selectedKey != "" {
+				m.expanded = !m.expanded
+			}
+		case "esc":
+			m.expanded = false
 		}
+
 	case snapshotMsg:
 		m.polls++
 		if msg.err != nil {
@@ -135,6 +172,25 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 		m.pods = newPods
+
+		// Keep selection valid; default to the first broken pod so a single
+		// broken pod is immediately selectable without pressing a key first.
+		stillBroken := false
+		for _, p := range m.brokenSorted() {
+			if p.Key() == m.selectedKey {
+				stillBroken = true
+				break
+			}
+		}
+		if !stillBroken {
+			m.expanded = false
+			if broken := m.brokenSorted(); len(broken) > 0 {
+				m.selectedKey = broken[0].Key()
+			} else {
+				m.selectedKey = ""
+			}
+		}
+
 		cmds = append(cmds, pollCmd(m.ctx, m.client, m.namespace, m.interval))
 		return m, tea.Batch(cmds...)
 
@@ -148,6 +204,23 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	}
 	return m, nil
+}
+
+func (m *model) moveSelection(delta int) {
+	broken := m.brokenSorted()
+	if len(broken) == 0 {
+		m.selectedKey = ""
+		return
+	}
+	idx := 0
+	for i, p := range broken {
+		if p.Key() == m.selectedKey {
+			idx = i
+			break
+		}
+	}
+	idx = (idx + delta + len(broken)) % len(broken)
+	m.selectedKey = broken[idx].Key()
 }
 
 // summarize pulls out a one-line summary of the model's answer. Models
@@ -179,38 +252,60 @@ func summarize(s string) string {
 
 func (m model) View() string {
 	var b strings.Builder
-	b.WriteString(styleTitle.Render("kubewhy watch") + styleDim.Render("  ·  read-only  ·  press q to quit") + "\n\n")
+	b.WriteString(styleTitle.Render("kubewhy watch") + styleDim.Render("  ·  read-only  ·  ↑/↓ select  ·  enter expand  ·  q quit") + "\n\n")
 
-	var healthy, warning, broken []watcher.PodHealth
+	var healthy, warning []watcher.PodHealth
+	broken := m.brokenSorted()
 	for _, p := range m.pods {
 		switch p.Status {
-		case watcher.StatusBroken:
-			broken = append(broken, p)
 		case watcher.StatusWarning:
 			warning = append(warning, p)
+		case watcher.StatusBroken:
+			// already collected via brokenSorted
 		default:
 			healthy = append(healthy, p)
 		}
 	}
-	sortPods := func(s []watcher.PodHealth) {
-		sort.Slice(s, func(i, j int) bool { return s[i].Key() < s[j].Key() })
-	}
-	sortPods(broken)
-	sortPods(warning)
+	sort.Slice(warning, func(i, j int) bool { return warning[i].Key() < warning[j].Key() })
 
 	if len(broken) > 0 {
 		b.WriteString(styleHeader.Render("BROKEN") + "\n")
 		for _, p := range broken {
-			b.WriteString(styleBroken.Render(fmt.Sprintf("  ✗ %s/%s", p.Namespace, p.Name)))
+			selected := p.Key() == m.selectedKey
+			cursor := "  "
+			if selected {
+				cursor = "▶ "
+			}
+			line := fmt.Sprintf("%s✗ %s/%s", cursor, p.Namespace, p.Name)
+			if selected {
+				b.WriteString(styleSelected.Render(styleBroken.Render(line)))
+			} else {
+				b.WriteString(styleBroken.Render(line))
+			}
 			b.WriteString(styleDim.Render(fmt.Sprintf("  (%s, %d restarts)\n", p.Reason, p.Restarts)))
-			if inv, ok := m.investigations[p.Key()]; ok {
-				switch inv.status {
-				case "running":
-					b.WriteString(styleDim.Render("      investigating...\n"))
-				case "error":
-					b.WriteString(styleDim.Render("      investigation failed: "+inv.err.Error()) + "\n")
-				case "done":
-					b.WriteString("      " + summarize(inv.answer) + "\n")
+
+			inv, ok := m.investigations[p.Key()]
+			if !ok {
+				continue
+			}
+			switch inv.status {
+			case "running":
+				b.WriteString(styleDim.Render("      investigating...\n"))
+			case "error":
+				b.WriteString(styleDim.Render("      investigation failed: "+inv.err.Error()) + "\n")
+			case "done":
+				if selected && m.expanded {
+					wrapWidth := m.width - 8
+					if wrapWidth < 20 {
+						wrapWidth = 20
+					}
+					b.WriteString(styleDetail.Width(wrapWidth).Render(inv.answer) + "\n")
+				} else {
+					suffix := ""
+					if selected {
+						suffix = styleDim.Render("  (enter to expand)")
+					}
+					b.WriteString("      " + summarize(inv.answer) + suffix + "\n")
 				}
 			}
 		}

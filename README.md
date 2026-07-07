@@ -60,12 +60,12 @@ and investigates anything broken automatically, in the background — no
 question required:
 
 ```
-kubewhy watch  ·  read-only  ·  press q to quit
+kubewhy watch  ·  read-only  ·  ↑/↓ select  ·  enter expand  ·  q quit
 
 BROKEN
-  ✗ prod/checkout-7cf7c94d78-7lzxs  (OOMKilled, 17 restarts)
+▶ ✗ prod/checkout-7cf7c94d78-7lzxs  (OOMKilled, 17 restarts)
       Root cause: The pod is OOMKilled — it tries to use ~300Mi but the
-      container's memory limit is 100Mi.
+      container's memory limit is 100Mi.  (enter to expand)
 
 WARNING
   ! staging/worker-9f8c  (2 restarts)
@@ -73,6 +73,11 @@ WARNING
 
 ✓ 14 pod(s) healthy
 ```
+
+The one-line summary is just a preview — broken pods are navigable with
+`↑`/`↓`, and `enter` expands the selected one into the full answer
+(complete evidence, reasoning, and verification commands), so nothing
+gets cut off.
 
 ```bash
 kubewhy watch                          # all namespaces
