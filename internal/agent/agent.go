@@ -32,9 +32,10 @@ root-cause hypothesis backed by concrete evidence (specific events, log lines,
 statuses -- not guesses).
 
 Keep investigating until you have enough evidence to give a confident answer,
-then stop calling tools and give your final answer as plain text. Your final
-answer must include:
-1. The root cause (or your best hypothesis, clearly labeled as such if unsure)
+then stop calling tools and give your final answer as plain text. Do not open
+with filler like "Great, I have enough evidence" -- start immediately with
+the answer. Your final answer must include, in this order:
+1. A line starting with "Root cause:" (or "Likely root cause:" if unsure)
 2. The evidence that supports it
 3. The equivalent kubectl commands a human could run to verify it themselves
 `
@@ -138,12 +139,40 @@ func explain(name string, input map[string]any) string {
 	return fmt.Sprintf("  → checking %s for %q\n    equivalent: %s", name, shown, equivalent)
 }
 
-func runTool(ctx context.Context, c *tools.Client, name string, raw json.RawMessage) (any, error) {
+// Reporter receives narration while an investigation runs. ConsoleReporter
+// prints it (used by the one-shot CLI); the watch dashboard uses a silent
+// implementation that just records the final answer for its own UI.
+type Reporter interface {
+	Intro(model, question string)
+	Step(msg string)
+	Final(text string)
+}
+
+type ConsoleReporter struct{}
+
+func (ConsoleReporter) Intro(model, question string) {
+	fmt.Printf("kubewhy (%s) investigating: %s\n\n", model, question)
+}
+func (ConsoleReporter) Step(msg string)  { fmt.Println(msg) }
+func (ConsoleReporter) Final(text string) {
+	fmt.Println("\nAnswer")
+	fmt.Println(text)
+}
+
+// SilentReporter discards narration -- used when an investigation runs in
+// the background of the watch dashboard, which renders its own UI instead.
+type SilentReporter struct{}
+
+func (SilentReporter) Intro(string, string) {}
+func (SilentReporter) Step(string)          {}
+func (SilentReporter) Final(string)         {}
+
+func runTool(ctx context.Context, c *tools.Client, name string, raw json.RawMessage, r Reporter) (any, error) {
 	var asMap map[string]any
 	if err := json.Unmarshal(raw, &asMap); err != nil {
 		return nil, err
 	}
-	fmt.Println(explain(name, asMap))
+	r.Step(explain(name, asMap))
 
 	switch name {
 	case "get_resource":
@@ -181,7 +210,7 @@ func runTool(ctx context.Context, c *tools.Client, name string, raw json.RawMess
 	}
 }
 
-func Investigate(ctx context.Context, question, apiKey, model string) (string, error) {
+func Investigate(ctx context.Context, question, apiKey, model string, r Reporter) (string, error) {
 	client, err := tools.LoadClient()
 	if err != nil {
 		return "", err
@@ -196,7 +225,7 @@ func Investigate(ctx context.Context, question, apiKey, model string) (string, e
 		{Role: openai.ChatMessageRoleUser, Content: question},
 	}
 
-	fmt.Printf("kubewhy (%s) investigating: %s\n\n", model, question)
+	r.Intro(model, question)
 
 	for {
 		resp, err := oa.CreateChatCompletion(ctx, openai.ChatCompletionRequest{
@@ -210,14 +239,13 @@ func Investigate(ctx context.Context, question, apiKey, model string) (string, e
 
 		msg := resp.Choices[0].Message
 		if len(msg.ToolCalls) == 0 {
-			fmt.Println("\nAnswer")
-			fmt.Println(msg.Content)
+			r.Final(msg.Content)
 			return msg.Content, nil
 		}
 
 		messages = append(messages, msg)
 		for _, call := range msg.ToolCalls {
-			result, err := runTool(ctx, client, call.Function.Name, json.RawMessage(call.Function.Arguments))
+			result, err := runTool(ctx, client, call.Function.Name, json.RawMessage(call.Function.Arguments), r)
 			var content string
 			if err != nil {
 				content = fmt.Sprintf(`{"error": %q}`, err.Error())

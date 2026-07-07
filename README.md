@@ -108,6 +108,38 @@ Models come from [OpenRouter](https://openrouter.ai), so the brain behind
 kubewhy is a runtime choice (`--model openai/gpt-5`, `--model
 anthropic/claude-sonnet-4.5`, whatever you like) — never hard-coded.
 
+## Don't want to ask? Watch mode does it for you
+
+`kubewhy watch` turns the same read-only checks into a live dashboard — it
+polls your cluster continuously, and the moment something looks broken it
+investigates automatically in the background, no question required:
+
+```
+kubewhy watch  ·  read-only  ·  press q to quit
+
+BROKEN
+  ✗ prod/checkout-7cf7c94d78-7lzxs  (OOMKilled, 17 restarts)
+      Root cause: The pod is OOMKilled — it tries to use ~300Mi but the
+      container's memory limit is 100Mi.
+
+WARNING
+  ! staging/worker-9f8c  (2 restarts)
+
+✓ 14 pod(s) healthy
+```
+
+A cheap, LLM-free check (`get pod` under the hood, no model calls) runs
+every few seconds to classify every pod as healthy / warning / broken.
+Only the ones that turn broken trigger the actual investigation loop — so
+you're not burning a model call per pod per second, only on things that
+are genuinely worth looking at.
+
+```bash
+kubewhy watch                          # all namespaces
+kubewhy watch --namespace prod         # just one
+kubewhy watch --interval 10s           # poll less often
+```
+
 ## Install
 
 Pick whichever is easiest for you — all three get you the same single binary.

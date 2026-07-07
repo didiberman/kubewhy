@@ -27,6 +27,10 @@ type Client struct {
 	metrics metricsv.Interface
 }
 
+// Core exposes the underlying clientset for callers that need lower-level
+// read-only access (e.g. the watcher's pod-listing poll loop).
+func (c *Client) Core() kubernetes.Interface { return c.core }
+
 func LoadClient() (*Client, error) {
 	loadingRules := clientcmd.NewDefaultClientConfigLoadingRules()
 	config, err := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(loadingRules, &clientcmd.ConfigOverrides{}).ClientConfig()
