@@ -77,7 +77,10 @@ WARNING
 The one-line summary is just a preview — broken pods are navigable with
 `↑`/`↓`, and `enter` expands the selected one into the full answer
 (complete evidence, reasoning, and verification commands), so nothing
-gets cut off.
+gets cut off. Once expanded, `f` opens a follow-up question about that
+specific pod — the model keeps everything it already investigated, so a
+follow-up like "what memory limit should I set instead?" doesn't restart
+the investigation from scratch.
 
 ```bash
 kubewhy watch                          # all namespaces
@@ -121,7 +124,15 @@ Verify it yourself: kubectl describe pod -n prod -l app=checkout
 ```
 
 Both transcripts above are real output from this repo's own demo cluster
-(see [Demo](#see-it-catch-a-real-bug) below).
+(see [Demo](#see-it-catch-a-real-bug) below). The answer renders as
+colorized, formatted markdown (headers, bold text, highlighted code) in
+your terminal rather than showing raw `**`/`` ``` `` syntax as literal
+text.
+
+After the first answer, kubewhy keeps the conversation open and asks if
+you want to follow up — a follow-up like "what should I set the memory
+limit to?" reuses everything already gathered instead of starting a new
+investigation from scratch.
 
 ## Two ideas make this different from a typical AI tool
 

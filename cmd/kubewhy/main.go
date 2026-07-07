@@ -1,12 +1,15 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"flag"
 	"fmt"
 	"os"
 	"strings"
 	"time"
+
+	"github.com/mattn/go-isatty"
 
 	"github.com/didiberman/kubewhy/internal/agent"
 	"github.com/didiberman/kubewhy/internal/dashboard"
@@ -49,9 +52,37 @@ func runAsk() {
 		os.Exit(1)
 	}
 
-	if _, err := agent.Investigate(context.Background(), question, apiKey, *model, agent.ConsoleReporter{}); err != nil {
+	ctx := context.Background()
+	sess, err := agent.NewSession(apiKey, *model)
+	if err != nil {
 		fmt.Fprintln(os.Stderr, "error:", err)
 		os.Exit(1)
+	}
+
+	if _, err := sess.Ask(ctx, question, agent.ConsoleReporter{}); err != nil {
+		fmt.Fprintln(os.Stderr, "error:", err)
+		os.Exit(1)
+	}
+
+	// Keep the same investigation open for follow-ups -- the model already
+	// has all the evidence it gathered, so a follow-up reuses it instead of
+	// starting over. Skipped entirely for non-interactive stdin (scripts,
+	// CI) so kubewhy never hangs waiting on input that will never arrive.
+	if !isatty.IsTerminal(os.Stdin.Fd()) && !isatty.IsCygwinTerminal(os.Stdin.Fd()) {
+		return
+	}
+	reader := bufio.NewReader(os.Stdin)
+	for {
+		fmt.Print("\nAsk a follow-up (blank to exit): ")
+		line, readErr := reader.ReadString('\n')
+		line = strings.TrimSpace(line)
+		if line == "" || readErr != nil {
+			return
+		}
+		if _, err := sess.Ask(ctx, line, agent.ConsoleReporter{}); err != nil {
+			fmt.Fprintln(os.Stderr, "error:", err)
+			return
+		}
 	}
 }
 

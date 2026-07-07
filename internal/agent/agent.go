@@ -38,9 +38,11 @@ the answer. Your final answer must include, in this order:
 1. A line starting with "Root cause:" (or "Likely root cause:" if unsure)
 2. The evidence that supports it
 3. The equivalent kubectl commands a human could run to verify it themselves
-`
 
-func strPtr(s string) *string { return &s }
+The user may ask follow-up questions about the same situation. You have the
+full investigation history already -- reuse it, and only call more tools if
+the follow-up genuinely needs new information.
+`
 
 func toolDefs() []openai.Tool {
 	def := func(name, desc string, params map[string]any) openai.Tool {
@@ -151,12 +153,12 @@ type Reporter interface {
 type ConsoleReporter struct{}
 
 func (ConsoleReporter) Intro(model, question string) {
-	fmt.Printf("kubewhy (%s) investigating: %s\n\n", model, question)
+	fmt.Println(styleTitle.Render(fmt.Sprintf("kubewhy (%s)", model)) + " investigating: " + question + "\n")
 }
-func (ConsoleReporter) Step(msg string)  { fmt.Println(msg) }
+func (ConsoleReporter) Step(msg string) { fmt.Println(styleDim.Render(msg)) }
 func (ConsoleReporter) Final(text string) {
-	fmt.Println("\nAnswer")
-	fmt.Println(text)
+	fmt.Println("\n" + styleAnswer.Render("Answer"))
+	fmt.Println(RenderMarkdown(text, 100))
 }
 
 // SilentReporter discards narration -- used when an investigation runs in
@@ -210,27 +212,43 @@ func runTool(ctx context.Context, c *tools.Client, name string, raw json.RawMess
 	}
 }
 
-func Investigate(ctx context.Context, question, apiKey, model string, r Reporter) (string, error) {
+// Session holds one ongoing investigation's conversation. Ask can be called
+// repeatedly -- each call is a follow-up that reuses everything the model
+// already learned (tool results, prior answers) rather than starting over.
+type Session struct {
+	client   *tools.Client
+	oa       *openai.Client
+	model    string
+	messages []openai.ChatCompletionMessage
+}
+
+func NewSession(apiKey, model string) (*Session, error) {
 	client, err := tools.LoadClient()
 	if err != nil {
-		return "", err
+		return nil, err
 	}
-
 	config := openai.DefaultConfig(apiKey)
 	config.BaseURL = OpenRouterBaseURL
-	oa := openai.NewClientWithConfig(config)
+	return &Session{
+		client: client,
+		oa:     openai.NewClientWithConfig(config),
+		model:  model,
+		messages: []openai.ChatCompletionMessage{
+			{Role: openai.ChatMessageRoleSystem, Content: systemPrompt},
+		},
+	}, nil
+}
 
-	messages := []openai.ChatCompletionMessage{
-		{Role: openai.ChatMessageRoleSystem, Content: systemPrompt},
-		{Role: openai.ChatMessageRoleUser, Content: question},
-	}
-
-	r.Intro(model, question)
+// Ask sends a question (the first one, or a follow-up) and runs the
+// tool-calling loop until the model gives a plain-text answer.
+func (s *Session) Ask(ctx context.Context, question string, r Reporter) (string, error) {
+	s.messages = append(s.messages, openai.ChatCompletionMessage{Role: openai.ChatMessageRoleUser, Content: question})
+	r.Intro(s.model, question)
 
 	for {
-		resp, err := oa.CreateChatCompletion(ctx, openai.ChatCompletionRequest{
-			Model:    model,
-			Messages: messages,
+		resp, err := s.oa.CreateChatCompletion(ctx, openai.ChatCompletionRequest{
+			Model:    s.model,
+			Messages: s.messages,
 			Tools:    toolDefs(),
 		})
 		if err != nil {
@@ -239,13 +257,14 @@ func Investigate(ctx context.Context, question, apiKey, model string, r Reporter
 
 		msg := resp.Choices[0].Message
 		if len(msg.ToolCalls) == 0 {
+			s.messages = append(s.messages, msg)
 			r.Final(msg.Content)
 			return msg.Content, nil
 		}
 
-		messages = append(messages, msg)
+		s.messages = append(s.messages, msg)
 		for _, call := range msg.ToolCalls {
-			result, err := runTool(ctx, client, call.Function.Name, json.RawMessage(call.Function.Arguments), r)
+			result, err := runTool(ctx, s.client, call.Function.Name, json.RawMessage(call.Function.Arguments), r)
 			var content string
 			if err != nil {
 				content = fmt.Sprintf(`{"error": %q}`, err.Error())
@@ -256,11 +275,22 @@ func Investigate(ctx context.Context, question, apiKey, model string, r Reporter
 					content = content[:8000]
 				}
 			}
-			messages = append(messages, openai.ChatCompletionMessage{
+			s.messages = append(s.messages, openai.ChatCompletionMessage{
 				Role:       openai.ChatMessageRoleTool,
 				ToolCallID: call.ID,
 				Content:    content,
 			})
 		}
 	}
+}
+
+// Investigate runs a single, one-off question -- a convenience wrapper
+// around Session for callers (like the watch dashboard's auto-trigger)
+// that don't need to keep the conversation open for follow-ups.
+func Investigate(ctx context.Context, question, apiKey, model string, r Reporter) (string, error) {
+	sess, err := NewSession(apiKey, model)
+	if err != nil {
+		return "", err
+	}
+	return sess.Ask(ctx, question, r)
 }

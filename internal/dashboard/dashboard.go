@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
@@ -34,13 +35,22 @@ var (
 	styleHeader   = lipgloss.NewStyle().Bold(true).Underline(true)
 	styleTitle    = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("6"))
 	styleSelected = lipgloss.NewStyle().Bold(true).Underline(true)
-	styleDetail   = lipgloss.NewStyle().Foreground(lipgloss.Color("7")).PaddingLeft(6)
+	styleQuestion = lipgloss.NewStyle().Italic(true).Foreground(lipgloss.Color("5"))
 )
 
+// qaPair is one follow-up question and its answer, shown under the
+// original investigation when expanded.
+type qaPair struct {
+	question string
+	answer   string
+}
+
 type investigation struct {
-	status string // "running", "done", "error"
-	answer string
-	err    error
+	status    string // "running", "done", "error", "asking"
+	session   *agent.Session
+	answer    string
+	err       error
+	followups []qaPair
 }
 
 type snapshotMsg struct {
@@ -49,9 +59,17 @@ type snapshotMsg struct {
 }
 
 type investigationMsg struct {
-	key    string
-	answer string
-	err    error
+	key     string
+	session *agent.Session
+	answer  string
+	err     error
+}
+
+type followupMsg struct {
+	key      string
+	question string
+	answer   string
+	err      error
 }
 
 type model struct {
@@ -70,6 +88,9 @@ type model struct {
 	selectedKey string
 	expanded    bool
 	width       int
+
+	askingKey string
+	input     textinput.Model
 }
 
 func Run(ctx context.Context, cfg Config) error {
@@ -77,6 +98,9 @@ func Run(ctx context.Context, cfg Config) error {
 	if err != nil {
 		return err
 	}
+	ti := textinput.New()
+	ti.Placeholder = "ask a follow-up..."
+	ti.CharLimit = 300
 	m := model{
 		ctx:            ctx,
 		client:         client,
@@ -87,6 +111,7 @@ func Run(ctx context.Context, cfg Config) error {
 		pods:           map[string]watcher.PodHealth{},
 		investigations: map[string]*investigation{},
 		width:          100,
+		input:          ti,
 	}
 	p := tea.NewProgram(m, tea.WithAltScreen())
 	_, err = p.Run()
@@ -109,9 +134,20 @@ func pollCmd(ctx context.Context, client *tools.Client, namespace string, wait t
 
 func investigateCmd(ctx context.Context, key, namespace, name, apiKey, llmModel string) tea.Cmd {
 	return func() tea.Msg {
+		sess, err := agent.NewSession(apiKey, llmModel)
+		if err != nil {
+			return investigationMsg{key: key, err: err}
+		}
 		question := fmt.Sprintf("why is pod %s in namespace %s unhealthy?", name, namespace)
-		answer, err := agent.Investigate(ctx, question, apiKey, llmModel, agent.SilentReporter{})
-		return investigationMsg{key: key, answer: answer, err: err}
+		answer, err := sess.Ask(ctx, question, agent.SilentReporter{})
+		return investigationMsg{key: key, session: sess, answer: answer, err: err}
+	}
+}
+
+func followupCmd(ctx context.Context, key, question string, sess *agent.Session) tea.Cmd {
+	return func() tea.Msg {
+		answer, err := sess.Ask(ctx, question, agent.SilentReporter{})
+		return followupMsg{key: key, question: question, answer: answer, err: err}
 	}
 }
 
@@ -134,6 +170,33 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.width = msg.Width
 
 	case tea.KeyMsg:
+		if m.askingKey != "" {
+			switch msg.Type {
+			case tea.KeyEsc:
+				m.askingKey = ""
+				m.input.Blur()
+				m.input.SetValue("")
+			case tea.KeyEnter:
+				key := m.askingKey
+				question := strings.TrimSpace(m.input.Value())
+				m.askingKey = ""
+				m.input.Blur()
+				m.input.SetValue("")
+				if question == "" {
+					return m, nil
+				}
+				if inv, ok := m.investigations[key]; ok && inv.session != nil {
+					inv.status = "asking"
+					return m, followupCmd(m.ctx, key, question, inv.session)
+				}
+			default:
+				var cmd tea.Cmd
+				m.input, cmd = m.input.Update(msg)
+				return m, cmd
+			}
+			return m, nil
+		}
+
 		switch msg.String() {
 		case "q", "ctrl+c":
 			return m, tea.Quit
@@ -149,6 +212,15 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		case "esc":
 			m.expanded = false
+		case "f":
+			if m.selectedKey != "" && m.expanded {
+				if inv, ok := m.investigations[m.selectedKey]; ok && inv.status == "done" {
+					m.askingKey = m.selectedKey
+					m.input.SetValue("")
+					m.input.Focus()
+					return m, textinput.Blink
+				}
+			}
 		}
 
 	case snapshotMsg:
@@ -199,7 +271,17 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if msg.err != nil {
 				inv.status, inv.err = "error", msg.err
 			} else {
-				inv.status, inv.answer = "done", msg.answer
+				inv.status, inv.answer, inv.session = "done", msg.answer, msg.session
+			}
+		}
+
+	case followupMsg:
+		if inv, ok := m.investigations[msg.key]; ok {
+			if msg.err != nil {
+				inv.status, inv.err = "error", msg.err
+			} else {
+				inv.followups = append(inv.followups, qaPair{question: msg.question, answer: msg.answer})
+				inv.status = "done"
 			}
 		}
 	}
@@ -252,7 +334,7 @@ func summarize(s string) string {
 
 func (m model) View() string {
 	var b strings.Builder
-	b.WriteString(styleTitle.Render("kubewhy watch") + styleDim.Render("  ·  read-only  ·  ↑/↓ select  ·  enter expand  ·  q quit") + "\n\n")
+	b.WriteString(styleTitle.Render("kubewhy watch") + styleDim.Render("  ·  read-only  ·  ↑/↓ select  ·  enter expand  ·  f follow-up  ·  q quit") + "\n\n")
 
 	var healthy, warning []watcher.PodHealth
 	broken := m.brokenSorted()
@@ -291,6 +373,8 @@ func (m model) View() string {
 			switch inv.status {
 			case "running":
 				b.WriteString(styleDim.Render("      investigating...\n"))
+			case "asking":
+				b.WriteString(styleDim.Render("      thinking about your follow-up...\n"))
 			case "error":
 				b.WriteString(styleDim.Render("      investigation failed: "+inv.err.Error()) + "\n")
 			case "done":
@@ -299,7 +383,16 @@ func (m model) View() string {
 					if wrapWidth < 20 {
 						wrapWidth = 20
 					}
-					b.WriteString(styleDetail.Width(wrapWidth).Render(inv.answer) + "\n")
+					b.WriteString(indent(agent.RenderMarkdown(inv.answer, wrapWidth), "      "))
+					for _, qa := range inv.followups {
+						b.WriteString("\n      " + styleQuestion.Render("> "+qa.question) + "\n")
+						b.WriteString(indent(agent.RenderMarkdown(qa.answer, wrapWidth), "      "))
+					}
+					if m.askingKey == p.Key() {
+						b.WriteString("      " + m.input.View() + "\n")
+					} else {
+						b.WriteString(styleDim.Render("      (f to ask a follow-up)") + "\n")
+					}
 				} else {
 					suffix := ""
 					if selected {
@@ -328,4 +421,14 @@ func (m model) View() string {
 	}
 
 	return b.String()
+}
+
+// indent prefixes every line of s with prefix, used to align rendered
+// markdown blocks under a pod's row.
+func indent(s, prefix string) string {
+	lines := strings.Split(strings.TrimRight(s, "\n"), "\n")
+	for i, line := range lines {
+		lines[i] = prefix + line
+	}
+	return strings.Join(lines, "\n") + "\n"
 }
