@@ -108,15 +108,38 @@ Models come from [OpenRouter](https://openrouter.ai), so the brain behind
 kubewhy is a runtime choice (`--model openai/gpt-5`, `--model
 anthropic/claude-sonnet-4.5`, whatever you like) — never hard-coded.
 
-## Try it in 60 seconds
+## Install
+
+Pick whichever is easiest for you — all three get you the same single binary.
+
+**One-line install (macOS/Linux):**
+
+```bash
+curl -sSL https://raw.githubusercontent.com/didiberman/kubewhy/main/install.sh | bash
+```
+
+**Via Go:**
+
+```bash
+go install github.com/didiberman/kubewhy/cmd/kubewhy@latest
+```
+
+**Download a prebuilt binary:** grab the archive for your OS/arch from the
+[Releases page](https://github.com/didiberman/kubewhy/releases/latest).
+
+**From source:**
 
 ```bash
 git clone https://github.com/didiberman/kubewhy
 cd kubewhy
 go build -o bin/kubewhy ./cmd/kubewhy
+```
 
+Then:
+
+```bash
 export OPENROUTER_API_KEY=sk-or-...
-./bin/kubewhy "why is my-pod in namespace default not ready?"
+kubewhy "why is my-pod in namespace default not ready?"
 ```
 
 No Python, no virtualenv, no Docker required to run it — it's a single
