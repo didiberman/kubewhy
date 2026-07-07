@@ -1,0 +1,35 @@
+# kubewhy's safety guarantee lives here, not in the prompt.
+#
+# Bind this ServiceAccount into a kubeconfig (see README) and kubewhy can
+# never mutate the cluster -- get/list/watch is all the API server will
+# allow, regardless of what the model tries to do.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: kubewhy
+  namespace: default
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: kubewhy-read-only
+rules:
+  - apiGroups: ["", "apps", "batch", "networking.k8s.io", "rbac.authorization.k8s.io", "metrics.k8s.io"]
+    resources: ["*"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["pods/log"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: kubewhy-read-only-binding
+subjects:
+  - kind: ServiceAccount
+    name: kubewhy
+    namespace: default
+roleRef:
+  kind: ClusterRole
+  name: kubewhy-read-only
+  apiGroup: rbac.authorization.k8s.io
