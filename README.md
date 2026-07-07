@@ -43,13 +43,19 @@ replace it.
 
 ## Install
 
+kubewhy ships as a single Go binary -- no runtime to install, no venv.
+
 ```bash
 git clone https://github.com/didiberman/kubewhy
 cd kubewhy
-pip install -e .
+go build -o bin/kubewhy ./cmd/kubewhy
 export OPENROUTER_API_KEY=sk-or-...
-kubewhy "why is my-pod in namespace default not ready?"
+./bin/kubewhy "why is my-pod in namespace default not ready?"
 ```
+
+(A Python prototype used to validate the idea lives under `src/kubewhy` /
+`pyproject.toml` -- same agent loop and tools, kept around for reference but
+the Go version in `cmd/` and `internal/` is what's maintained going forward.)
 
 kubewhy talks to models through [OpenRouter](https://openrouter.ai) rather
 than one provider directly, so the model is a runtime choice, not something
