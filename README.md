@@ -14,13 +14,89 @@
 
 ---
 
-## The 10-second pitch
+## Install
 
-Something's wrong in your cluster. Normally that means twenty minutes of
-`kubectl get`, `describe`, `logs`, `events`, guessing, repeating.
+One line, no Python, no virtualenv, no Docker — a single compiled binary.
 
-kubewhy does that twenty minutes for you — you just ask it what's wrong,
-in plain English:
+```bash
+curl -sSL https://kubewhy.didibe.dev | bash
+```
+
+<details>
+<summary>Other ways to install</summary>
+
+**Via Go:**
+
+```bash
+go install github.com/didiberman/kubewhy/cmd/kubewhy@latest
+```
+
+**Download a prebuilt binary:** grab the archive for your OS/arch from the
+[Releases page](https://github.com/didiberman/kubewhy/releases/latest).
+
+**From source:**
+
+```bash
+git clone https://github.com/didiberman/kubewhy
+cd kubewhy
+go build -o bin/kubewhy ./cmd/kubewhy
+```
+
+</details>
+
+Then set your model key and point it at a cluster — it uses whatever
+context your `kubectl` currently points at:
+
+```bash
+export OPENROUTER_API_KEY=sk-or-...
+kubewhy "why is my-pod in namespace default not ready?"
+```
+
+## Latest: `kubewhy watch` — a live dashboard that finds problems before you ask
+
+This is the newest and most-used way to run kubewhy. Instead of asking one
+question at a time, `kubewhy watch` polls your whole cluster continuously
+and investigates anything broken automatically, in the background — no
+question required:
+
+```
+kubewhy watch  ·  read-only  ·  press q to quit
+
+BROKEN
+  ✗ prod/checkout-7cf7c94d78-7lzxs  (OOMKilled, 17 restarts)
+      Root cause: The pod is OOMKilled — it tries to use ~300Mi but the
+      container's memory limit is 100Mi.
+
+WARNING
+  ! staging/worker-9f8c  (2 restarts)
+  ! prod/checkout-canary  (no resource requests set (breaks HPA / cluster-autoscaler sizing))
+
+✓ 14 pod(s) healthy
+```
+
+```bash
+kubewhy watch                          # all namespaces
+kubewhy watch --namespace prod         # just one
+kubewhy watch --interval 10s           # poll less often
+```
+
+**How it stays cheap:** a plain `get pod` poll (no model calls at all)
+classifies every pod as healthy / warning / broken every few seconds. Only
+pods that turn broken trigger the actual LLM investigation loop — so
+you're not burning a model call per pod per second, only on things
+genuinely worth looking at.
+
+**What it catches beyond crashes:** the cheap check also flags things that
+never crash but quietly break autoscaling — like a pod with no CPU/memory
+requests set, which means the HPA has nothing to compute a percentage
+against and Cluster Autoscaler / Karpenter can't size a node for it. Those
+show as `WARNING` since nothing is actively failing, just silently
+misconfigured.
+
+## The one-shot version: just ask it something
+
+Before `watch` mode existed, this was the whole tool, and it still works
+standalone for a one-off question:
 
 ```
 $ kubewhy "why is checkout crashlooping in the prod namespace?"
@@ -39,46 +115,8 @@ Fix: raise the memory limit to 300Mi or higher.
 Verify it yourself: kubectl describe pod -n prod -l app=checkout
 ```
 
-That's a real transcript from this repo's own demo cluster.
-
-## Don't want to ask? Watch mode does it for you
-
-`kubewhy watch` turns the same read-only checks into a live dashboard — it
-polls your cluster continuously, and the moment something looks broken it
-investigates automatically in the background, no question required:
-
-```
-kubewhy watch  ·  read-only  ·  press q to quit
-
-BROKEN
-  ✗ prod/checkout-7cf7c94d78-7lzxs  (OOMKilled, 17 restarts)
-      Root cause: The pod is OOMKilled — it tries to use ~300Mi but the
-      container's memory limit is 100Mi.
-
-WARNING
-  ! staging/worker-9f8c  (2 restarts)
-  ! prod/checkout-canary  (no resource requests set (breaks HPA / cluster-autoscaler sizing))
-
-✓ 14 pod(s) healthy
-```
-
-A cheap, LLM-free check (`get pod` under the hood, no model calls) runs
-every few seconds to classify every pod as healthy / warning / broken.
-Only the ones that turn broken trigger the actual investigation loop — so
-you're not burning a model call per pod per second, only on things that
-are genuinely worth looking at.
-
-That cheap check also catches things that never crash but quietly break
-autoscaling — like a pod with no CPU/memory requests, which means the
-HPA has nothing to compute a percentage against and Cluster Autoscaler /
-Karpenter can't size a node for it. Those show as `WARNING` rather than
-`BROKEN` since nothing is actively failing yet.
-
-```bash
-kubewhy watch                          # all namespaces
-kubewhy watch --namespace prod         # just one
-kubewhy watch --interval 10s           # poll less often
-```
+Both transcripts above are real output from this repo's own demo cluster
+(see [Demo](#see-it-catch-a-real-bug) below).
 
 ## Two ideas make this different from a typical AI tool
 
@@ -141,51 +179,12 @@ flowchart LR
 It's one small loop, repeated until the model has enough evidence to give
 a confident answer. No installed operator, no custom resources, no
 multi-agent framework — just a CLI, your kubeconfig, and a handful of
-read-only checks.
+read-only checks. `watch` mode wraps this same loop with a cheap poller
+that decides *when* to trigger it.
 
 Models come from [OpenRouter](https://openrouter.ai), so the brain behind
 kubewhy is a runtime choice (`--model openai/gpt-5`, `--model
 anthropic/claude-sonnet-4.5`, whatever you like) — never hard-coded.
-
-## Install
-
-Pick whichever is easiest for you — all three get you the same single binary.
-
-**One-line install (macOS/Linux):**
-
-```bash
-curl -sSL https://kubewhy.didibe.dev | bash
-```
-
-**Via Go:**
-
-```bash
-go install github.com/didiberman/kubewhy/cmd/kubewhy@latest
-```
-
-**Download a prebuilt binary:** grab the archive for your OS/arch from the
-[Releases page](https://github.com/didiberman/kubewhy/releases/latest).
-
-**From source:**
-
-```bash
-git clone https://github.com/didiberman/kubewhy
-cd kubewhy
-go build -o bin/kubewhy ./cmd/kubewhy
-```
-
-Then:
-
-```bash
-export OPENROUTER_API_KEY=sk-or-...
-kubewhy "why is my-pod in namespace default not ready?"
-```
-
-No Python, no virtualenv, no Docker required to run it — it's a single
-compiled binary that talks to whatever cluster your `kubectl` currently
-points at.
-
-Want to see it catch a real, reproducible failure first? See [Demo](#see-it-catch-a-real-bug) below.
 
 ## Want the ironclad version?
 
@@ -210,6 +209,7 @@ watch kubewhy diagnose it, not take our word for it:
 kind create cluster --name kubewhy-demo --config deploy/kind-config.yaml
 kubectl apply -f deploy/demo-broken-app.yaml   # deliberately OOM-kills itself
 kubewhy "why is the checkout deployment in the prod namespace crashlooping?"
+# or: kubewhy watch
 ```
 
 ## What it can diagnose today (v0.1)
@@ -248,4 +248,3 @@ point of the project.
 ## License
 
 MIT
-
