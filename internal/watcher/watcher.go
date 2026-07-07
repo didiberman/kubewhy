@@ -96,6 +96,20 @@ func classify(pod corev1.Pod, now time.Time) PodHealth {
 		}
 	}
 
+	// Missing resource requests isn't a crash, but it silently breaks
+	// autoscaling: HPA can't compute a percentage against zero, and Cluster
+	// Autoscaler / Karpenter can't size nodes for a pod with no declared
+	// footprint. Worth surfacing even though nothing is actively failing.
+	if h.Status == StatusHealthy {
+		for _, c := range pod.Spec.Containers {
+			if c.Resources.Requests.Cpu().IsZero() && c.Resources.Requests.Memory().IsZero() {
+				h.Status = StatusWarning
+				h.Reason = "no resource requests set (breaks HPA / cluster-autoscaler sizing)"
+				break
+			}
+		}
+	}
+
 	if h.Status == StatusHealthy && maxRestarts > 0 {
 		h.Status = StatusWarning
 		h.Reason = fmt.Sprintf("%d restart(s)", maxRestarts)

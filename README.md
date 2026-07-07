@@ -124,6 +124,7 @@ BROKEN
 
 WARNING
   ! staging/worker-9f8c  (2 restarts)
+  ! prod/checkout-canary  (no resource requests set (breaks HPA / cluster-autoscaler sizing))
 
 ✓ 14 pod(s) healthy
 ```
@@ -133,6 +134,12 @@ every few seconds to classify every pod as healthy / warning / broken.
 Only the ones that turn broken trigger the actual investigation loop — so
 you're not burning a model call per pod per second, only on things that
 are genuinely worth looking at.
+
+That cheap check also catches things that never crash but quietly break
+autoscaling — like a pod with no CPU/memory requests, which means the
+HPA has nothing to compute a percentage against and Cluster Autoscaler /
+Karpenter can't size a node for it. Those show as `WARNING` rather than
+`BROKEN` since nothing is actively failing yet.
 
 ```bash
 kubewhy watch                          # all namespaces
@@ -210,6 +217,9 @@ kubewhy "why is the checkout deployment in the prod namespace crashlooping?"
 - Crashing / not-ready pods (`get`, `describe`, `logs`, `events`)
 - Namespace event timelines ("what's been happening here?")
 - Basic CPU/memory pressure (via `kubectl top`, needs metrics-server)
+- Pods with no resource requests set — silently breaks HPA and
+  Cluster Autoscaler / Karpenter node sizing, caught automatically by
+  `kubewhy watch`
 
 More playbooks — cost spikes, network policy issues, "what changed since
 yesterday" — are next. Contributions welcome; open an issue with the
