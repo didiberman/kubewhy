@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
-# Installs the latest kubewhy release for your OS/arch into /usr/local/bin.
+# Installs the latest kubewhy release for your OS/arch into a directory you
+# already own -- never asks for sudo/admin access.
 # Usage: curl -sSL https://kubewhy.didibe.dev | bash
 set -euo pipefail
 
 REPO="didiberman/kubewhy"
-INSTALL_DIR="${KUBEWHY_INSTALL_DIR:-/usr/local/bin}"
+INSTALL_DIR="${KUBEWHY_INSTALL_DIR:-$HOME/.local/bin}"
 
 os="$(uname -s | tr '[:upper:]' '[:lower:]')"
 arch="$(uname -m)"
@@ -30,13 +31,20 @@ trap 'rm -rf "$tmpdir"' EXIT
 curl -fsSL "$url" -o "$tmpdir/$archive"
 tar -xzf "$tmpdir/$archive" -C "$tmpdir" kubewhy
 
-mkdir -p "$INSTALL_DIR" 2>/dev/null || true
-
-if [ -w "$INSTALL_DIR" ]; then
-  mv "$tmpdir/kubewhy" "$INSTALL_DIR/kubewhy"
-else
-  sudo mv "$tmpdir/kubewhy" "$INSTALL_DIR/kubewhy"
-fi
+mkdir -p "$INSTALL_DIR"
+mv "$tmpdir/kubewhy" "$INSTALL_DIR/kubewhy"
+chmod +x "$INSTALL_DIR/kubewhy"
 
 echo "Installed to ${INSTALL_DIR}/kubewhy"
 "$INSTALL_DIR/kubewhy" --version
+
+case ":$PATH:" in
+  *":$INSTALL_DIR:"*) ;;
+  *)
+    echo ""
+    echo "${INSTALL_DIR} isn't on your PATH yet. Add this to your shell rc file (~/.bashrc, ~/.zshrc):"
+    echo ""
+    echo "  export PATH=\"${INSTALL_DIR}:\$PATH\""
+    echo ""
+    ;;
+esac

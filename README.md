@@ -17,6 +17,9 @@
 ## Install
 
 One line, no Python, no virtualenv, no Docker — a single compiled binary.
+Installs to `~/.local/bin` and never asks for sudo/admin access — the same
+"can't touch anything it doesn't need to" philosophy applies to installing
+it, not just running it.
 
 ```bash
 curl -sSL https://kubewhy.didibe.dev | bash
