@@ -3,7 +3,19 @@ name: build
 on:
   push:
     branches: [main]
+    paths:
+      - "cmd/**"
+      - "internal/**"
+      - "go.mod"
+      - "go.sum"
+      - ".github/workflows/build.yml"
   pull_request:
+    paths:
+      - "cmd/**"
+      - "internal/**"
+      - "go.mod"
+      - "go.sum"
+      - ".github/workflows/build.yml"
 
 jobs:
   compile:

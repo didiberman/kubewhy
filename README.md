@@ -1,183 +1,183 @@
+<div align="center">
+
 # kubewhy
+
+### Ask your Kubernetes cluster "why" — in plain English.
 
 [![build](https://github.com/didiberman/kubewhy/actions/workflows/build.yml/badge.svg)](https://github.com/didiberman/kubewhy/actions/workflows/build.yml)
 [![Go Report Card](https://goreportcard.com/badge/github.com/didiberman/kubewhy)](https://goreportcard.com/report/github.com/didiberman/kubewhy)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-**Ask your Kubernetes cluster "why" in plain English.** kubewhy investigates
-step by step and narrates its reasoning as it goes -- and it is read-only by
-construction, so it's safe to point at a live incident in production.
+**It investigates like a senior engineer. It can't break anything, ever. And it shows its work.**
+
+</div>
+
+---
+
+## The 10-second pitch
+
+Something's wrong in your cluster. Normally that means twenty minutes of
+`kubectl get`, `describe`, `logs`, `events`, guessing, repeating.
+
+kubewhy does that twenty minutes for you — you just ask it what's wrong,
+in plain English:
 
 ```
 $ kubewhy "why is checkout crashlooping in the prod namespace?"
 
-kubewhy (anthropic/claude-sonnet-4.5) investigating: why is checkout crashlooping in the prod namespace?
+kubewhy investigating: why is checkout crashlooping in the prod namespace?
 
-  → checking get_resource for "prod"
-    equivalent: kubectl get pod  -n prod
-  → checking describe_pod for "checkout-7cf7c94d78-7lzxs"
-    equivalent: kubectl describe pod checkout-7cf7c94d78-7lzxs -n prod
-  → checking get_logs for "checkout-7cf7c94d78-7lzxs"
-    equivalent: kubectl logs checkout-7cf7c94d78-7lzxs -n prod --previous
-  → checking get_events for "checkout-7cf7c94d78-7lzxs"
-    equivalent: kubectl get events -n prod --field-selector involvedObject.name=checkout-7cf7c94d78-7lzxs
+  → checking events for "prod"                    (like: kubectl get events -n prod)
+  → checking checkout's pod details                (like: kubectl describe pod ...)
+  → checking its crash logs                        (like: kubectl logs ... --previous)
 
 Answer
-Root cause: the container is being OOMKilled. It's asked to allocate 300Mi
-of memory but the pod's memory limit is only 100Mi (exit code 137, restart
-count climbing). Fix: raise the limit to >=300Mi or reduce what the process
-allocates.
+Root cause: OOMKilled. The app tries to use 300Mi of memory, but the pod's
+limit is only 100Mi — so Kubernetes kills it every time it starts.
 
-Verify yourself:
-  kubectl describe pod -n prod -l app=checkout
-  kubectl get events -n prod --sort-by=.lastTimestamp | grep -i oom
+Fix: raise the memory limit to 300Mi or higher.
+Verify it yourself: kubectl describe pod -n prod -l app=checkout
 ```
 
-That transcript is real output from this repo's demo cluster (see
-[Demo](#demo) below).
+That's a real transcript from this repo's own demo cluster.
 
-## Table of contents
+## Two ideas make this different from a typical AI tool
 
-- [Why read-only](#why-read-only)
-- [Why it teaches you](#why-it-teaches-you)
-- [How it works](#how-it-works)
-- [Install](#install)
-- [Usage](#usage)
-- [Running with enforced read-only RBAC](#running-with-enforced-read-only-rbac)
-- [Demo](#demo)
-- [What it can investigate today (v0.1)](#what-it-can-investigate-today-v01)
-- [Roadmap](#roadmap)
-- [Contributing](#contributing)
-- [License](#license)
+<table>
+<tr>
+<td width="50%" valign="top">
 
-## Why read-only
+### 🔒 It physically cannot break anything
 
-Agent frameworks for Kubernetes (kagent and similar) let agents *act* on a
-cluster -- deploy, patch, scale, delegate to other agents. kubewhy does the
-opposite on purpose: it only investigates, and never mutates anything.
+Most AI agents for infrastructure can also *change* things — deploy, scale,
+delete. That's powerful, but it means every answer comes with "what if it's
+wrong and acts on it?"
 
-That's not a prompt instruction the model could ignore or a system message
-that a jailbreak could bypass -- it's enforced by RBAC. Bind kubewhy to the
-ServiceAccount in [`deploy/readonly-clusterrole.yaml`](deploy/readonly-clusterrole.yaml),
-which only grants `get`/`list`/`watch`, and the Kubernetes API server itself
-rejects anything else, no matter what the model tries to call. Even a
-compromised or hallucinating model can't do more than read.
+kubewhy skips that risk entirely. Think of it as an extremely
+capable intern who's allowed to look at absolutely anything in the
+building, but has **no hands** — they can open any door, read any file,
+but cannot pick anything up.
 
-This is what makes it safe to run against a live incident: no write access
-means no blast radius, so there's nothing to review or approve before you
-use it.
+Concretely: kubewhy connects to Kubernetes using a permission set that
+only allows *look, don't touch* (`get`/`list`/`watch` — nothing else).
+This isn't a promise the AI makes you — it's enforced by Kubernetes
+itself. Even if the model completely lost its mind and tried to delete
+your production database, Kubernetes would simply refuse, the same way a
+locked door doesn't care how politely (or rudely) you ask.
 
-## Why it teaches you
+That's why it's safe to point at production, mid-incident, without asking
+anyone for permission first.
 
-Every tool call kubewhy makes is narrated *before* it runs -- what it's about
-to check, why, and the exact `kubectl` command it's equivalent to. The final
-answer includes those commands too, so you can reproduce the investigation
-by hand next time. The goal is to make you faster at `kubectl` and better at
-reading your own cluster, not to replace that skill with a black box.
+</td>
+<td width="50%" valign="top">
 
-## How it works
+### 🎓 It shows its work, like a good teacher
 
-One loop, no agent framework:
+Most AI answers arrive as a finished paragraph — you either trust it or
+you don't, and you learn nothing about *how* it got there.
 
+kubewhy instead narrates itself in real time: *"checking crash logs
+because the pod just restarted"* — followed by the plain old `kubectl`
+command that does the same thing. The final answer includes those
+commands too, so you could've done it yourself by hand.
+
+The goal isn't to make `kubectl` obsolete. It's to make you faster at
+it — every answer doubles as a small lesson.
+
+</td>
+</tr>
+</table>
+
+## How it works, in one picture
+
+```mermaid
+flowchart LR
+    Q["🗣️ Your question\n(plain English)"] --> M["🤖 AI model\npicks what to check next"]
+    M --> T["🔍 Read-only check\nget · describe · logs · events"]
+    T --> K[("☸️ Kubernetes API\n(look-only permissions)")]
+    K --> M
+    M -->|confident enough| A["✅ Answer\nroot cause + evidence + kubectl commands"]
 ```
-question ──▶ model picks a read-only tool ──▶ kubewhy calls the k8s API
-   ▲                                                      │
-   │                                                       ▼
-   └──────────── result fed back to the model ◀── narrated to you (teaching stream)
-                         │
-                         ▼ (once confident)
-                  final answer + evidence + kubectl commands to verify
-```
 
-No CRDs, no operator to install, no vector memory, no multi-agent
-delegation -- a CLI, your kubeconfig, and a handful of typed tool functions
-(`get_resource`, `describe_pod`, `get_logs`, `get_events`, `top_pods`).
+It's one small loop, repeated until the model has enough evidence to give
+a confident answer. No installed operator, no custom resources, no
+multi-agent framework — just a CLI, your kubeconfig, and a handful of
+read-only checks.
 
-kubewhy talks to models through [OpenRouter](https://openrouter.ai) rather
-than one provider directly, so the model is a runtime choice, not something
-baked into the code -- swap in whatever's best or cheapest that week.
+Models come from [OpenRouter](https://openrouter.ai), so the brain behind
+kubewhy is a runtime choice (`--model openai/gpt-5`, `--model
+anthropic/claude-sonnet-4.5`, whatever you like) — never hard-coded.
 
-## Install
-
-kubewhy ships as a single Go binary -- no runtime to install, no venv.
+## Try it in 60 seconds
 
 ```bash
 git clone https://github.com/didiberman/kubewhy
 cd kubewhy
 go build -o bin/kubewhy ./cmd/kubewhy
+
 export OPENROUTER_API_KEY=sk-or-...
 ./bin/kubewhy "why is my-pod in namespace default not ready?"
 ```
 
-> A Python prototype used to validate the idea before the Go port lives
-> under `src/kubewhy` / `pyproject.toml` -- same agent loop and tools, kept
-> around for reference. The Go version in `cmd/` and `internal/` is the one
-> that's maintained going forward.
+No Python, no virtualenv, no Docker required to run it — it's a single
+compiled binary that talks to whatever cluster your `kubectl` currently
+points at.
 
-## Usage
+Want to see it catch a real, reproducible failure first? See [Demo](#see-it-catch-a-real-bug) below.
 
-```bash
-kubewhy "why is checkout crashlooping in prod?"
-kubewhy "is anything in the prod namespace unhealthy?"
-kubewhy "why did the payments deployment lose availability an hour ago?"
+## Want the ironclad version?
 
-# pick any model available on OpenRouter
-kubewhy "..." --model openai/gpt-5
-kubewhy "..." --model google/gemini-3-pro
-```
-
-Defaults to `anthropic/claude-sonnet-4.5`. Uses whatever context your local
-`~/.kube/config` currently points at, same as `kubectl`.
-
-## Running with enforced read-only RBAC
-
-By default kubewhy runs with your own kubeconfig credentials, whatever those
-allow. To make the read-only guarantee airtight -- so kubewhy *can't* write
-even if your own user has cluster-admin -- bind it to a scoped
-ServiceAccount instead:
+By default kubewhy uses your own kubeconfig, whatever permissions that
+carries. To make the "it literally cannot write" guarantee airtight —
+useful for prod, a customer's cluster, or anywhere you want zero trust in
+the AI's judgment — bind it to a locked-down account instead:
 
 ```bash
 kubectl apply -f deploy/readonly-clusterrole.yaml
-# generate a kubeconfig scoped to the kubewhy ServiceAccount, then:
+# generate a kubeconfig scoped to that account, then:
 export KUBECONFIG=./kubewhy.kubeconfig
 kubewhy "..."
 ```
 
-This is the recommended way to run it against a cluster you don't fully
-trust yourself around -- prod, a customer's cluster, or during an incident
-when you want zero chance of an unintended write.
+## See it catch a real bug
 
-## Demo
-
-[`deploy/kind-config.yaml`](deploy/kind-config.yaml) and
-[`deploy/demo-broken-app.yaml`](deploy/demo-broken-app.yaml) reproduce the
-exact scenario in the transcript above: a 1 control-plane / 3 worker kind
-cluster with a `checkout` deployment that reliably OOMKills itself.
+This repo includes a script that reproduces a genuine failure so you can
+watch kubewhy diagnose it, not take our word for it:
 
 ```bash
 kind create cluster --name kubewhy-demo --config deploy/kind-config.yaml
-kubectl apply -f deploy/demo-broken-app.yaml
-export OPENROUTER_API_KEY=sk-or-...
+kubectl apply -f deploy/demo-broken-app.yaml   # deliberately OOM-kills itself
 kubewhy "why is the checkout deployment in the prod namespace crashlooping?"
 ```
 
-## What it can investigate today (v0.1)
+## What it can diagnose today (v0.1)
 
-- Pod crashloops / not-ready state (`get`, `describe`, `logs`, `events`)
-- Namespace-level event timelines
-- Basic resource pressure via `kubectl top` (requires metrics-server)
+- Crashing / not-ready pods (`get`, `describe`, `logs`, `events`)
+- Namespace event timelines ("what's been happening here?")
+- Basic CPU/memory pressure (via `kubectl top`, needs metrics-server)
 
-## Roadmap
+More playbooks — cost spikes, network policy issues, "what changed since
+yesterday" — are next. Contributions welcome; open an issue with the
+scenario you want it to handle.
 
-More investigation playbooks are next -- cost anomalies, NetworkPolicy /
-ingress reachability, RBAC drift, "what changed since yesterday" (git-diff
-against manifests). Contributions welcome; open an issue with the
-investigation scenario you want covered.
+## FAQ
+
+**Isn't this just kagent?** No — [kagent](https://github.com/kagent-dev/kagent)
+is a framework for building agents that *act* on your cluster (deploy,
+patch, scale). kubewhy is narrower on purpose: it only ever looks, never
+touches, and ships as one binary instead of a platform to operate.
+
+**Do I need to trust the AI model?** Only with information, never with
+access. Worst case it gives you a wrong diagnosis — it can't make the
+problem worse, because it has no way to change anything.
+
+**Which models work?** Anything available on OpenRouter that supports
+tool calling — Claude, GPT, Gemini, and most open-weight models.
 
 ## Contributing
 
-Issues and PRs welcome. If you're adding a new read-only tool, keep it to a
-single `get`/`list`/`watch`-shaped API call -- that constraint is the whole
+Adding a new investigation tool? Keep it to a single
+`get`/`list`/`watch`-shaped API call — that constraint is the entire
 point of the project.
 
 ## License
