@@ -47,9 +47,20 @@ replace it.
 git clone https://github.com/didiberman/kubewhy
 cd kubewhy
 pip install -e .
-export ANTHROPIC_API_KEY=sk-...
+export OPENROUTER_API_KEY=sk-or-...
 kubewhy ask "why is my-pod in namespace default not ready?"
 ```
+
+kubewhy talks to models through [OpenRouter](https://openrouter.ai) rather
+than one provider directly, so the model is a runtime choice, not something
+baked into the code:
+
+```bash
+kubewhy ask "..." --model openai/gpt-5
+kubewhy ask "..." --model google/gemini-3-pro
+```
+
+Defaults to `anthropic/claude-sonnet-4.5`.
 
 By default kubewhy uses whatever context your local `~/.kube/config` points
 at. To run it with the enforced read-only RBAC role instead of your own
