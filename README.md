@@ -5,7 +5,7 @@ itself as it goes -- it's read-only by construction, so it's safe to point
 at production.
 
 ```
-$ kubewhy ask "why is checkout crashlooping in the prod namespace?"
+$ kubewhy "why is checkout crashlooping in the prod namespace?"
 
 kubewhy investigating: why is checkout crashlooping in the prod namespace?
 
@@ -48,7 +48,7 @@ git clone https://github.com/didiberman/kubewhy
 cd kubewhy
 pip install -e .
 export OPENROUTER_API_KEY=sk-or-...
-kubewhy ask "why is my-pod in namespace default not ready?"
+kubewhy "why is my-pod in namespace default not ready?"
 ```
 
 kubewhy talks to models through [OpenRouter](https://openrouter.ai) rather
@@ -56,8 +56,8 @@ than one provider directly, so the model is a runtime choice, not something
 baked into the code:
 
 ```bash
-kubewhy ask "..." --model openai/gpt-5
-kubewhy ask "..." --model google/gemini-3-pro
+kubewhy "..." --model openai/gpt-5
+kubewhy "..." --model google/gemini-3-pro
 ```
 
 Defaults to `anthropic/claude-sonnet-4.5`.
@@ -70,7 +70,7 @@ credentials:
 kubectl apply -f deploy/readonly-clusterrole.yaml
 # generate a kubeconfig scoped to the kubewhy ServiceAccount, then:
 export KUBECONFIG=./kubewhy.kubeconfig
-kubewhy ask "..."
+kubewhy "..."
 ```
 
 ## What it can investigate today (v0.1)
