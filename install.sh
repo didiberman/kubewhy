@@ -30,6 +30,8 @@ trap 'rm -rf "$tmpdir"' EXIT
 curl -fsSL "$url" -o "$tmpdir/$archive"
 tar -xzf "$tmpdir/$archive" -C "$tmpdir" kubewhy
 
+mkdir -p "$INSTALL_DIR" 2>/dev/null || true
+
 if [ -w "$INSTALL_DIR" ]; then
   mv "$tmpdir/kubewhy" "$INSTALL_DIR/kubewhy"
 else
