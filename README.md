@@ -41,6 +41,45 @@ Verify it yourself: kubectl describe pod -n prod -l app=checkout
 
 That's a real transcript from this repo's own demo cluster.
 
+## Don't want to ask? Watch mode does it for you
+
+`kubewhy watch` turns the same read-only checks into a live dashboard — it
+polls your cluster continuously, and the moment something looks broken it
+investigates automatically in the background, no question required:
+
+```
+kubewhy watch  ·  read-only  ·  press q to quit
+
+BROKEN
+  ✗ prod/checkout-7cf7c94d78-7lzxs  (OOMKilled, 17 restarts)
+      Root cause: The pod is OOMKilled — it tries to use ~300Mi but the
+      container's memory limit is 100Mi.
+
+WARNING
+  ! staging/worker-9f8c  (2 restarts)
+  ! prod/checkout-canary  (no resource requests set (breaks HPA / cluster-autoscaler sizing))
+
+✓ 14 pod(s) healthy
+```
+
+A cheap, LLM-free check (`get pod` under the hood, no model calls) runs
+every few seconds to classify every pod as healthy / warning / broken.
+Only the ones that turn broken trigger the actual investigation loop — so
+you're not burning a model call per pod per second, only on things that
+are genuinely worth looking at.
+
+That cheap check also catches things that never crash but quietly break
+autoscaling — like a pod with no CPU/memory requests, which means the
+HPA has nothing to compute a percentage against and Cluster Autoscaler /
+Karpenter can't size a node for it. Those show as `WARNING` rather than
+`BROKEN` since nothing is actively failing yet.
+
+```bash
+kubewhy watch                          # all namespaces
+kubewhy watch --namespace prod         # just one
+kubewhy watch --interval 10s           # poll less often
+```
+
 ## Two ideas make this different from a typical AI tool
 
 <table>
@@ -108,45 +147,6 @@ Models come from [OpenRouter](https://openrouter.ai), so the brain behind
 kubewhy is a runtime choice (`--model openai/gpt-5`, `--model
 anthropic/claude-sonnet-4.5`, whatever you like) — never hard-coded.
 
-## Don't want to ask? Watch mode does it for you
-
-`kubewhy watch` turns the same read-only checks into a live dashboard — it
-polls your cluster continuously, and the moment something looks broken it
-investigates automatically in the background, no question required:
-
-```
-kubewhy watch  ·  read-only  ·  press q to quit
-
-BROKEN
-  ✗ prod/checkout-7cf7c94d78-7lzxs  (OOMKilled, 17 restarts)
-      Root cause: The pod is OOMKilled — it tries to use ~300Mi but the
-      container's memory limit is 100Mi.
-
-WARNING
-  ! staging/worker-9f8c  (2 restarts)
-  ! prod/checkout-canary  (no resource requests set (breaks HPA / cluster-autoscaler sizing))
-
-✓ 14 pod(s) healthy
-```
-
-A cheap, LLM-free check (`get pod` under the hood, no model calls) runs
-every few seconds to classify every pod as healthy / warning / broken.
-Only the ones that turn broken trigger the actual investigation loop — so
-you're not burning a model call per pod per second, only on things that
-are genuinely worth looking at.
-
-That cheap check also catches things that never crash but quietly break
-autoscaling — like a pod with no CPU/memory requests, which means the
-HPA has nothing to compute a percentage against and Cluster Autoscaler /
-Karpenter can't size a node for it. Those show as `WARNING` rather than
-`BROKEN` since nothing is actively failing yet.
-
-```bash
-kubewhy watch                          # all namespaces
-kubewhy watch --namespace prod         # just one
-kubewhy watch --interval 10s           # poll less often
-```
-
 ## Install
 
 Pick whichever is easiest for you — all three get you the same single binary.
@@ -154,7 +154,7 @@ Pick whichever is easiest for you — all three get you the same single binary.
 **One-line install (macOS/Linux):**
 
 ```bash
-curl -sSL https://raw.githubusercontent.com/didiberman/kubewhy/main/install.sh | bash
+curl -sSL https://kubewhy.didibe.dev | bash
 ```
 
 **Via Go:**

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Installs the latest kubewhy release for your OS/arch into /usr/local/bin.
-# Usage: curl -sSL https://raw.githubusercontent.com/didiberman/kubewhy/main/install.sh | bash
+# Usage: curl -sSL https://kubewhy.didibe.dev | bash
 set -euo pipefail
 
 REPO="didiberman/kubewhy"
